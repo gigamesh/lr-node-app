@@ -1,5 +1,7 @@
 require('dotenv').config();
 const KEY = process.env.KEY1;
+
+console.log('KEY: ', KEY);
 const axios = require('axios');
 const {
   filterResponse,
@@ -42,7 +44,7 @@ client.connect(url, dbConfig, async (err, mongoClient) => {
   function fetchContributions() {
     let contributions = [];
 
-    return new Promise(resolve => {
+    return new Promise((resolve, reject) => {
       // each fetchNext call gets up to 100 more results and
       // adds them to the contributions array
       fetchNext();
@@ -84,49 +86,52 @@ client.connect(url, dbConfig, async (err, mongoClient) => {
 
           // if not done fetching, keep fetching
         } else {
-          axios.get(URL).then(async response => {
-            contributions.push(...filterResponse(response));
+          axios
+            .get(URL)
+            .then(async response => {
+              contributions.push(...filterResponse(response));
 
-            const pageData = response.data.pagination;
+              const pageData = response.data.pagination;
 
-            // check to see if any results returned
-            if (pageData.count === 0) {
-              console.log('======================');
-              console.log(`no contributions on ${formattedDate}...`);
-              console.log('======================');
-              resolve(true);
-              return;
-            }
-
-            // check to see if this day is already successfully saved to db
-            if (contributions.length < 101) {
-              if (await checkIfAllSaved(db, formattedDate, pageData.count)) {
+              // check to see if any results returned
+              if (pageData.count === 0) {
+                console.log('======================');
+                console.log(`no contributions on ${formattedDate}...`);
+                console.log('======================');
                 resolve(true);
                 return;
               }
-            }
 
-            // save 10k if array is getting too big for its britches
-            if (contributions.length > 9000) {
-              try {
-                await save(db, contributions, formattedDate, count);
-                contributions = [];
-              } catch (err) {
-                console.log(err);
+              // check to see if this day is already successfully saved to db
+              if (contributions.length < 101) {
+                if (await checkIfAllSaved(db, formattedDate, pageData.count)) {
+                  resolve(true);
+                  return;
+                }
               }
-            }
 
-            const {
-              last_index: l_idx,
-              last_contribution_receipt_date: l_date
-            } = pageData.last_indexes;
+              // save 10k if array is getting too big for its britches
+              if (contributions.length > 9000) {
+                try {
+                  await save(db, contributions, formattedDate, count);
+                  contributions = [];
+                } catch (err) {
+                  console.log(err);
+                }
+              }
 
-            console.log('---------------');
-            console.log('count: ', count);
-            console.log('contributions.length: ', contributions.length);
+              const {
+                last_index: l_idx,
+                last_contribution_receipt_date: l_date
+              } = pageData.last_indexes;
 
-            fetchNext(pageData.count, l_idx, l_date);
-          });
+              console.log('---------------');
+              console.log('count: ', count);
+              console.log('contributions.length: ', contributions.length);
+
+              fetchNext(pageData.count, l_idx, l_date);
+            })
+            .catch(reject);
         }
       }
     });
