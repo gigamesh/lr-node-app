@@ -4,7 +4,6 @@ const axios = require('axios');
 const {
   filterResponse,
   getDates,
-  removeDuplicates,
   letterGenerator,
   nextKeyGenerator,
   candidateChooser,
@@ -90,14 +89,6 @@ function fetchContributions(db, candidate) {
         URL += `&last_index=${l_idx}&last_contribution_receipt_date=${l_date}`;
       }
 
-      // if done fetching, save to DB
-      if (count && count === fetchedSoFar) {
-        // filter out any duplicates
-        contributions = removeDuplicates(contributions, 'transaction_id');
-        initSave(db, contributions, formattedDate, candidate);
-        resolve(true);
-      }
-
       // else fetch next batch
       axios
         .get(URL)
@@ -121,7 +112,7 @@ function fetchContributions(db, candidate) {
             );
             console.log('');
 
-            initSave(db, contributions, formattedDate, candidate);
+            initSave(db, contributions, formattedDate, candidate, count);
             resolve(true);
           }
 
@@ -131,23 +122,32 @@ function fetchContributions(db, candidate) {
             console.log(`no contributions on ${formattedDate}...`);
             console.log('======================');
             resolve(true);
-            return;
           }
 
           // check to see if this day is already successfully saved to db
-          if (contributions.length < 100) {
+          else if (contributions.length < 100) {
             if (await checkIfAllSaved(db, formattedDate, count, candidate)) {
               resolve(true);
-              return;
             }
           }
 
-          // save 10k if array is getting too big for its britches
-          if (contributions.length === 10000) {
-            initSave(db, contributions, formattedDate, candidate);
-            contributions = [];
+          // if done fetching, save to DB
+          else if (count && fetchedSoFar >= count) {
+            initSave(db, contributions, formattedDate, candidate, count);
+            resolve(true);
+            return;
           }
 
+          // save 10k if array is getting too big for its britches & continue
+          if (contributions.length === 10000) {
+            initSave(db, contributions, formattedDate, candidate, count);
+            contributions = [];
+
+            // resets didPaginationFail function
+            didPaginationFail = fetchIntegrityGenerator();
+          }
+
+          // prepare for next fetch
           if (pageData.last_indexes) {
             l_idx = pageData.last_indexes.last_index;
             l_date = pageData.last_indexes.last_contribution_receipt_date;
@@ -173,16 +173,16 @@ function fetchContributions(db, candidate) {
   });
 }
 
-async function initSave(db, contributions, formattedDate, candidate) {
+async function initSave() {
   try {
-    await save(db, contributions, formattedDate, candidate);
+    await save(...arguments);
     return;
   } catch (err) {
     console.log(err);
   }
 }
 
-function save(db, contributions, date, candidate) {
+function save(db, contributions, date, candidate, count) {
   const letter = nextLetter();
 
   return new Promise((res, rej) => {
@@ -192,6 +192,7 @@ function save(db, contributions, date, candidate) {
 
     const object = {
       _id,
+      count,
       contributions
     };
 

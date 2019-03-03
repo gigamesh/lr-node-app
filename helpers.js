@@ -33,6 +33,14 @@ function fetchIntegrityGenerator() {
   let fetches = 0;
   let internalTally = 0;
   return contribLength => {
+    console.log(
+      'fetches: ',
+      fetches,
+      ' internalTally: ',
+      internalTally,
+      ' contribLength: ',
+      contribLength
+    );
     ++fetches;
     if (fetches === 1) {
       internalTally = contribLength;
@@ -63,20 +71,6 @@ function getDates(startDate) {
     max_date,
     formattedDate
   };
-}
-
-function removeDuplicates(originalArray, prop) {
-  var newArray = [];
-  var lookupObject = {};
-
-  for (var i in originalArray) {
-    lookupObject[originalArray[i][prop]] = originalArray[i];
-  }
-
-  for (i in lookupObject) {
-    newArray.push(lookupObject[i]);
-  }
-  return newArray;
 }
 
 function saveToJSON(array) {
