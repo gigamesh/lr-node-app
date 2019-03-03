@@ -1,27 +1,32 @@
 require('dotenv').config();
-const KEY = process.env.KEY1;
-
-console.log('KEY: ', KEY);
+var myArgs = require('optimist').argv;
 const axios = require('axios');
 const {
   filterResponse,
   getDates,
   removeDuplicates,
-  createCandidates
+  letterGenerator,
+  nextKeyGenerator,
+  candidateChooser,
+  fetchIntegrityGenerator
 } = require('./helpers');
 const url = 'mongodb://localhost:27017/';
 const dbConfig = { useNewUrlParser: true };
 const mongodb = require('mongodb');
 const client = mongodb.MongoClient;
-
-const CANDIDATE = 'Bernie Sanders';
-// Hillary announcement:  new Date(2015, 03, 12);
-
-const START_DATE = new Date(2015, 09, 12);
+const nextKey = nextKeyGenerator(myArgs.keys);
+const CANDIDATE = candidateChooser(myArgs.id);
+let KEY = nextKey();
+const IDS = ['P60007671', 'P60008075', 'P60008885'];
 const END_DATE = new Date(2016, 06, 12); // Bernie drops out
 
 // query params for API and
-let { min_date, max_date, formattedDate } = getDates(START_DATE);
+let min_date, max_date, formattedDate;
+let fetchedSoFar = 0;
+let count = 0;
+let nextLetter;
+let l_idx = '';
+let l_date = '';
 
 // CONNECT TO MONGO
 
@@ -29,122 +34,185 @@ client.connect(url, dbConfig, async (err, mongoClient) => {
   if (err) throw err;
   const db = mongoClient.db('lib_rad');
 
-  while (min_date < END_DATE) {
-    console.log(`ABOUT TO START A NEW FETCH ROUND: ${formattedDate}.....`);
+  await startCandidate(db, CANDIDATE);
 
-    // start recursive fetch process
-    const fetchSuccess = await fetchContributions();
+  // for (let i = 0; i < IDS.length; i++) {
+  //   const candidate = candidateChooser(IDS[i]);
+  //   console.log(candidate);
+  //   await startCandidate(db, candidate);
+  // }
 
-    // if fetch failed, don't advance dates
-    if (!fetchSuccess) continue;
-    ({ min_date, max_date, formattedDate } = getDates(min_date));
-    console.log('next date: ', formattedDate);
-  }
-
-  function fetchContributions() {
-    let contributions = [];
-
-    return new Promise((resolve, reject) => {
-      // each fetchNext call gets up to 100 more results and
-      // adds them to the contributions array
-      fetchNext();
-
-      async function fetchNext(count, l_idx, l_date) {
-        let URL = `https://api.open.fec.gov/v1/schedules/schedule_a/?sort_null_only=false&max_date=${max_date.toISOString()}&two_year_transaction_period=2016&api_key=${KEY}&min_date=${min_date.toISOString()}&committee_id=C00577130&sort=contribution_receipt_date&sort_hide_null=false&per_page=100`;
-
-        // these keep track of pagination
-        // only need to be appended after the first fetch
-        if (l_idx) {
-          URL += `&last_index=${l_idx}&last_contribution_receipt_date=${l_date}`;
-        }
-
-        // if done fetching, return contributions
-        if (count <= contributions.length) {
-          // filter out any duplicates
-          contributions = removeDuplicates(contributions, 'transaction_id');
-
-          // check if the API messed up and if so, try that day again
-          let ratio = contributions.length / count;
-          if (ratio < 0.9) {
-            console.log(
-              'BAD RATIO: ',
-              ratio,
-              `trying ${formattedDate} again...`
-            );
-            resolve(false);
-            return;
-          }
-
-          // ...else save to DB
-          try {
-            await save(db, contributions, formattedDate, count);
-            resolve(true);
-            return;
-          } catch (err) {
-            console.log(err);
-          }
-
-          // if not done fetching, keep fetching
-        } else {
-          axios
-            .get(URL)
-            .then(async response => {
-              contributions.push(...filterResponse(response));
-
-              const pageData = response.data.pagination;
-
-              // check to see if any results returned
-              if (pageData.count === 0) {
-                console.log('======================');
-                console.log(`no contributions on ${formattedDate}...`);
-                console.log('======================');
-                resolve(true);
-                return;
-              }
-
-              // check to see if this day is already successfully saved to db
-              if (contributions.length < 101) {
-                if (await checkIfAllSaved(db, formattedDate, pageData.count)) {
-                  resolve(true);
-                  return;
-                }
-              }
-
-              // save 10k if array is getting too big for its britches
-              if (contributions.length > 9000) {
-                try {
-                  await save(db, contributions, formattedDate, count);
-                  contributions = [];
-                } catch (err) {
-                  console.log(err);
-                }
-              }
-
-              const {
-                last_index: l_idx,
-                last_contribution_receipt_date: l_date
-              } = pageData.last_indexes;
-
-              console.log('---------------');
-              console.log('count: ', count);
-              console.log('contributions.length: ', contributions.length);
-
-              fetchNext(pageData.count, l_idx, l_date);
-            })
-            .catch(reject);
-        }
-      }
-    });
-  }
+  console.log('Done!!!');
   mongoClient.close();
 });
 
-function checkIfAllSaved(db, date, count) {
+async function startCandidate(db, candidate) {
+  ({ min_date, max_date, formattedDate } = getDates(candidate.date));
+
+  return new Promise(async res => {
+    while (min_date < END_DATE) {
+      console.log(' ');
+      console.log(
+        `STARTING NEW FETCH ROUND: ${candidate.name} ${formattedDate}.....`
+      );
+      console.log(' ');
+
+      // reset nextLetter function
+      nextLetter = letterGenerator();
+      // start recursive fetch process
+      const fetchSuccess = await fetchContributions(db, candidate);
+      // if fetch failed, don't advance dates
+      if (!fetchSuccess) continue;
+      ({ min_date, max_date, formattedDate } = getDates(min_date));
+    }
+    res();
+  });
+}
+
+function fetchContributions(db, candidate) {
+  let contributions = [];
+  let didPaginationFail = fetchIntegrityGenerator();
+  fetchedSoFar = 0;
+
+  return new Promise((resolve, reject) => {
+    // each fetchNext call gets up to 100 more results and
+    // adds them to the contributions array
+    fetchNext();
+
+    async function fetchNext() {
+      let URL = `https://api.open.fec.gov/v1/schedules/schedule_a/?sort_null_only=false&max_date=${max_date.toISOString()}&two_year_transaction_period=2016&api_key=${KEY}&min_date=${min_date.toISOString()}&committee_id=${
+        candidate.cmte_id
+      }&sort=contribution_receipt_date&sort_hide_null=false&per_page=100`;
+
+      // these keep track of pagination
+      // only need to be appended after the first fetch
+      if (l_idx) {
+        URL += `&last_index=${l_idx}&last_contribution_receipt_date=${l_date}`;
+      }
+
+      // if done fetching, save to DB
+      if (count && count === fetchedSoFar) {
+        // filter out any duplicates
+        contributions = removeDuplicates(contributions, 'transaction_id');
+        initSave(db, contributions, formattedDate, candidate);
+        resolve(true);
+      }
+
+      // else fetch next batch
+      axios
+        .get(URL)
+        .then(async response => {
+          const filtered = filterResponse(response);
+          fetchedSoFar += filtered.length;
+          contributions.push(...filtered);
+          const pageData = response.data.pagination;
+          count = pageData.count;
+
+          // console.log(URL);
+
+          // checks if the fetch pagination is working correctly
+          // sometimes it reports a larger total count than what it sends back
+          if (didPaginationFail(contributions.length)) {
+            console.log('======================');
+            console.log(
+              `Bad fetch count: ${count} -- aborting & saving ${
+                contributions.length
+              } contributions on ${formattedDate}`
+            );
+            console.log('');
+
+            initSave(db, contributions, formattedDate, candidate);
+            resolve(true);
+          }
+
+          // check to see if any results returned
+          if (count === 0 || !contributions.length) {
+            console.log('======================');
+            console.log(`no contributions on ${formattedDate}...`);
+            console.log('======================');
+            resolve(true);
+            return;
+          }
+
+          // check to see if this day is already successfully saved to db
+          if (contributions.length < 100) {
+            if (await checkIfAllSaved(db, formattedDate, count, candidate)) {
+              resolve(true);
+              return;
+            }
+          }
+
+          // save 10k if array is getting too big for its britches
+          if (contributions.length === 10000) {
+            initSave(db, contributions, formattedDate, candidate);
+            contributions = [];
+          }
+
+          if (pageData.last_indexes) {
+            l_idx = pageData.last_indexes.last_index;
+            l_date = pageData.last_indexes.last_contribution_receipt_date;
+          }
+
+          console.log(`-------${formattedDate}--------`);
+          console.log('count: ', count);
+          console.log('fetchedSoFar: ', fetchedSoFar);
+          console.log('l_idx: ', l_idx, '  l_date: ', l_date);
+
+          fetchNext();
+        })
+        .catch(err => {
+          if (err.response && err.response.status == 429) {
+            KEY = nextKey();
+
+            fetchNext();
+          } else {
+            console.log(err);
+          }
+        });
+    }
+  });
+}
+
+async function initSave(db, contributions, formattedDate, candidate) {
+  try {
+    await save(db, contributions, formattedDate, candidate);
+    return;
+  } catch (err) {
+    console.log(err);
+  }
+}
+
+function save(db, contributions, date, candidate) {
+  const letter = nextLetter();
+
+  return new Promise((res, rej) => {
+    const _id = `${date + letter}`;
+    console.log('======================');
+    console.log(`saving ${_id} contributions...`);
+
+    const object = {
+      _id,
+      contributions
+    };
+
+    const doc = db.collection(candidate.name);
+    doc
+      .updateOne({ _id: _id }, { $set: object }, { upsert: true })
+      .then(() => {
+        console.log(`${_id} success!`);
+        console.log('======================');
+        res(true);
+      })
+      .catch(rej);
+  });
+}
+
+function checkIfAllSaved(db, dateId, count, candidate) {
   return new Promise((resolve, rej) => {
-    const doc = db.collection(CANDIDATE);
+    const doc = db.collection(candidate.name);
     doc
       .aggregate(
-        { $match: { _id: date } },
+        { $match: { _id: dateId } },
         { $unwind: '$contributions' },
         { $group: { count: { $sum: 1 } } }
       )
@@ -158,54 +226,5 @@ function checkIfAllSaved(db, date, count) {
         }
         resolve(false);
       });
-  });
-}
-
-function save(db, contributions, date, count) {
-  const letters = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K'];
-  const i = contributions.length / 10000;
-  const letter = contributions.length >= 10000 ? letters[i] : '';
-
-  return new Promise((res, rej) => {
-    console.log('======================');
-    console.log(`saving ${date}-${letter} contributions...`);
-    console.log(`COUNT CHECK: ${count} === ${contributions.length}`);
-
-    const object = {
-      _id: `${date}-${letter}`,
-      contributions
-    };
-
-    const doc = db.collection(CANDIDATE);
-    doc
-      .updateOne(
-        { _id: `${date}-${letter}` },
-        { $set: object },
-        { upsert: true }
-      )
-      .then(() => {
-        console.log(`${date}-${letter} success!`);
-        console.log('======================');
-        res(true);
-      })
-      .catch(rej);
-  });
-}
-
-function initDocInDB(db, date) {
-  return new Promise((res, rej) => {
-    const doc = db.collection(CANDIDATE);
-    const object = {
-      _id: date,
-      contributions: []
-    };
-    doc
-      .updateOne({ _id: date }, { $set: object }, { upsert: true })
-      .then(() => {
-        console.log(`${date} initialized in DB`);
-        console.log(' ');
-        res(true);
-      })
-      .catch(rej);
   });
 }

@@ -12,6 +12,7 @@
     "axios": "^0.18.0",
     "csvtojson": "^2.0.8",
     "dotenv": "^6.2.0",
-    "mongodb": "^3.1.13"
+    "mongodb": "^3.1.13",
+    "optimist": "^0.6.1"
   }
 }
