@@ -1,7 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 require('dotenv').config();
-const { KEY_1A, KEY_2A, KEY_3A, KEY_1B, KEY_2B, KEY_3B } = process.env;
+const { KEY_1A, KEY_2A, KEY_3A, KEY_1B, KEY_2B, KEY_3B, KEY_4B } = process.env;
 
 function filterResponse(res) {
   return res.data.results.map(o => ({
@@ -29,23 +29,55 @@ function filterResponse(res) {
   }));
 }
 
-function fetchIntegrityGenerator() {
-  let fetches = 0;
-  let internalTally = 0;
-  return contribLength => {
-    console.log(
-      'fetches: ',
-      fetches,
-      ' internalTally: ',
-      internalTally,
-      ' contribLength: ',
-      contribLength
-    );
-    ++fetches;
-    if (fetches === 1) {
-      internalTally = contribLength;
+function candidateChooser(id) {
+  const DEMS = [
+    {
+      name: 'Bernie Sanders',
+      candidate_id: 'P60007168',
+      cmte_id: 'C00577130',
+      party: 'DEM',
+      date: new Date(2016, 02, 04)
+    },
+    {
+      name: 'Hillary Clinton',
+      candidate_id: 'P00003392',
+      cmte_id: 'C00575795',
+      party: 'DEM',
+      date: new Date(2016, 04, 14)
+    },
+    {
+      name: 'Martin OMalley',
+      candidate_id: 'P60007671',
+      cmte_id: 'C00578658',
+      party: 'DEM',
+      date: new Date(2015, 04, 13)
+    },
+    {
+      name: 'Lincoln Chafee',
+      candidate_id: 'P60008075',
+      cmte_id: 'C00579706',
+      party: 'DEM',
+      date: new Date(2015, 04, 10)
+    },
+    {
+      name: 'Jim Webb',
+      candidate_id: 'P60008885',
+      cmte_id: 'C00581215',
+      party: 'DEM',
+      date: new Date(2015, 04, 10)
     }
-    return fetches > 1 && internalTally === contribLength;
+  ];
+  return DEMS.find(o => id === o.candidate_id);
+}
+
+function fetchIntegrityGenerator() {
+  let internalTally;
+  return contribLength => {
+    if (internalTally === contribLength) {
+      return true;
+    }
+    internalTally = contribLength;
+    return false;
   };
 }
 
@@ -138,7 +170,7 @@ function letterGenerator() {
 function nextKeyGenerator(keyGroup) {
   if (!keyGroup) throw 'No keygroup supplied!';
   const keysA = [KEY_1A, KEY_2A, KEY_3A];
-  const keysB = [KEY_1B, KEY_2B, KEY_3B];
+  const keysB = [KEY_1B, KEY_2B, KEY_3B, KEY_4B];
   const keys = keyGroup === 'A' ? keysA : keysB;
 
   let tick = -1;
@@ -150,52 +182,10 @@ function nextKeyGenerator(keyGroup) {
   };
 }
 
-function candidateChooser(id) {
-  const DEMS = [
-    {
-      name: 'Bernie Sanders',
-      candidate_id: 'P60007168',
-      cmte_id: 'C00577130',
-      party: 'DEM',
-      date: new Date(2016, 01, 28)
-    },
-    {
-      name: 'Hillary Clinton',
-      candidate_id: 'P00003392',
-      cmte_id: 'C00575795',
-      party: 'DEM',
-      date: new Date(2016, 04, 04)
-    },
-    {
-      name: 'Martin OMalley',
-      candidate_id: 'P60007671',
-      cmte_id: 'C00578658',
-      party: 'DEM',
-      date: new Date(2015, 04, 13)
-    },
-    {
-      name: 'Lincoln Chafee',
-      candidate_id: 'P60008075',
-      cmte_id: 'C00579706',
-      party: 'DEM',
-      date: new Date(2015, 04, 10)
-    },
-    {
-      name: 'Jim Webb',
-      candidate_id: 'P60008885',
-      cmte_id: 'C00581215',
-      party: 'DEM',
-      date: new Date(2015, 04, 10)
-    }
-  ];
-  return DEMS.find(o => id === o.candidate_id);
-}
-
 module.exports = {
   filterResponse,
   createCandidates,
   getDates,
-  removeDuplicates,
   saveToJSON,
   letterGenerator,
   nextKeyGenerator,

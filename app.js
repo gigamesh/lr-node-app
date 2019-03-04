@@ -105,15 +105,15 @@ function fetchContributions(db, candidate) {
           // sometimes it reports a larger total count than what it sends back
           if (didPaginationFail(contributions.length)) {
             console.log('======================');
-            console.log(
-              `Bad fetch count: ${count} -- aborting & saving ${
-                contributions.length
-              } contributions on ${formattedDate}`
-            );
             console.log('');
-
-            initSave(db, contributions, formattedDate, candidate, count);
-            resolve(true);
+            console.error(
+              `Bad fetch count: ${count}, restarting ${formattedDate}`
+            );
+            l_idx = '';
+            l_date = '';
+            contributions = [];
+            resolve(false);
+            return;
           }
 
           // check to see if any results returned
@@ -122,14 +122,15 @@ function fetchContributions(db, candidate) {
             console.log(`no contributions on ${formattedDate}...`);
             console.log('======================');
             resolve(true);
+            return;
           }
 
-          // check to see if this day is already successfully saved to db
-          else if (contributions.length < 100) {
-            if (await checkIfAllSaved(db, formattedDate, count, candidate)) {
-              resolve(true);
-            }
-          }
+          // // check to see if this day is already successfully saved to db
+          // else if (contributions.length < 100) {
+          //   if (await checkIfAllSaved(db, formattedDate, count, candidate)) {
+          //     resolve(true);
+          //   }
+          // }
 
           // if done fetching, save to DB
           else if (count && fetchedSoFar >= count) {
