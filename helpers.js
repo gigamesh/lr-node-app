@@ -2,6 +2,43 @@ const fs = require('fs');
 const path = require('path');
 require('dotenv').config();
 const { KEY_1A, KEY_2A, KEY_3A, KEY_1B, KEY_2B, KEY_3B, KEY_4B } = process.env;
+const DEMS = [
+  {
+    name: 'Bernie Sanders',
+    candidate_id: 'P60007168',
+    cmte_id: 'C00577130',
+    party: 'DEM',
+    date: new Date(2016, 03, 28)
+  },
+  {
+    name: 'Hillary Clinton',
+    candidate_id: 'P00003392',
+    cmte_id: 'C00575795',
+    party: 'DEM',
+    date: new Date(2016, 05, 22)
+  },
+  {
+    name: 'Martin OMalley',
+    candidate_id: 'P60007671',
+    cmte_id: 'C00578658',
+    party: 'DEM',
+    date: new Date(2015, 03, 13)
+  },
+  {
+    name: 'Lincoln Chafee',
+    candidate_id: 'P60008075',
+    cmte_id: 'C00579706',
+    party: 'DEM',
+    date: new Date(2015, 04, 10)
+  },
+  {
+    name: 'Jim Webb',
+    candidate_id: 'P60008885',
+    cmte_id: 'C00581215',
+    party: 'DEM',
+    date: new Date(2015, 04, 10)
+  }
+];
 
 function filterResponse(res) {
   return res.data.results.map(o => ({
@@ -30,43 +67,6 @@ function filterResponse(res) {
 }
 
 function candidateChooser(id) {
-  const DEMS = [
-    {
-      name: 'Bernie Sanders',
-      candidate_id: 'P60007168',
-      cmte_id: 'C00577130',
-      party: 'DEM',
-      date: new Date(2016, 02, 04)
-    },
-    {
-      name: 'Hillary Clinton',
-      candidate_id: 'P00003392',
-      cmte_id: 'C00575795',
-      party: 'DEM',
-      date: new Date(2016, 04, 14)
-    },
-    {
-      name: 'Martin OMalley',
-      candidate_id: 'P60007671',
-      cmte_id: 'C00578658',
-      party: 'DEM',
-      date: new Date(2015, 04, 13)
-    },
-    {
-      name: 'Lincoln Chafee',
-      candidate_id: 'P60008075',
-      cmte_id: 'C00579706',
-      party: 'DEM',
-      date: new Date(2015, 04, 10)
-    },
-    {
-      name: 'Jim Webb',
-      candidate_id: 'P60008885',
-      cmte_id: 'C00581215',
-      party: 'DEM',
-      date: new Date(2015, 04, 10)
-    }
-  ];
   return DEMS.find(o => id === o.candidate_id);
 }
 
@@ -161,7 +161,7 @@ function letterGenerator() {
   ];
   let i = 0;
   return () => {
-    const letter = '-' + letters[i];
+    const letter = letters[i];
     i++;
     return letter;
   };
@@ -190,5 +190,6 @@ module.exports = {
   letterGenerator,
   nextKeyGenerator,
   candidateChooser,
-  fetchIntegrityGenerator
+  fetchIntegrityGenerator,
+  DEMS
 };

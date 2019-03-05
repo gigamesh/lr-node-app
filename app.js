@@ -16,14 +16,14 @@ const client = mongodb.MongoClient;
 const nextKey = nextKeyGenerator(myArgs.keys);
 const CANDIDATE = candidateChooser(myArgs.id);
 let KEY = nextKey();
-const IDS = ['P60007671', 'P60008075', 'P60008885'];
-const END_DATE = new Date(2016, 06, 12); // Bernie drops out
+const END_DATE = new Date(2016, 04, 03);
 
 // query params for API and
 let min_date, max_date, formattedDate;
 let fetchedSoFar = 0;
 let count = 0;
-let nextLetter;
+let nextLetter = letterGenerator();
+let letter = nextLetter();
 let l_idx = '';
 let l_date = '';
 
@@ -34,12 +34,6 @@ client.connect(url, dbConfig, async (err, mongoClient) => {
   const db = mongoClient.db('lib_rad');
 
   await startCandidate(db, CANDIDATE);
-
-  // for (let i = 0; i < IDS.length; i++) {
-  //   const candidate = candidateChooser(IDS[i]);
-  //   console.log(candidate);
-  //   await startCandidate(db, candidate);
-  // }
 
   console.log('Done!!!');
   mongoClient.close();
@@ -56,12 +50,26 @@ async function startCandidate(db, candidate) {
       );
       console.log(' ');
 
-      // reset nextLetter function
-      nextLetter = letterGenerator();
       // start recursive fetch process
-      const fetchSuccess = await fetchContributions(db, candidate);
-      // if fetch failed, don't advance dates
-      if (!fetchSuccess) continue;
+      const fetchResult = await fetchContributions(db, candidate);
+
+      // if fetch failed...
+      if (!fetchResult.success) {
+        console.log(`Retrying: ${formattedDate}-${letter}.....`);
+
+        if (fetchResult.retry && fetchedSoFar > 10000) {
+          await retryLastBatch(db, candidate);
+
+          // else break out of loop without resetting dates & letter
+        } else continue;
+      }
+
+      // reset nextLetter function, fetch counter, and move to next day
+      nextLetter = letterGenerator();
+      letter = nextLetter();
+      fetchedSoFar = 0;
+      l_idx = '';
+      l_date = '';
       ({ min_date, max_date, formattedDate } = getDates(min_date));
     }
     res();
@@ -71,7 +79,6 @@ async function startCandidate(db, candidate) {
 function fetchContributions(db, candidate) {
   let contributions = [];
   let didPaginationFail = fetchIntegrityGenerator();
-  fetchedSoFar = 0;
 
   return new Promise((resolve, reject) => {
     // each fetchNext call gets up to 100 more results and
@@ -104,15 +111,9 @@ function fetchContributions(db, candidate) {
           // checks if the fetch pagination is working correctly
           // sometimes it reports a larger total count than what it sends back
           if (didPaginationFail(contributions.length)) {
-            console.log('======================');
-            console.log('');
-            console.error(
-              `Bad fetch count: ${count}, restarting ${formattedDate}`
-            );
-            l_idx = '';
-            l_date = '';
             contributions = [];
-            resolve(false);
+            console.log('pagination fail!');
+            resolve({ success: false, retry: true });
             return;
           }
 
@@ -121,27 +122,20 @@ function fetchContributions(db, candidate) {
             console.log('======================');
             console.log(`no contributions on ${formattedDate}...`);
             console.log('======================');
-            resolve(true);
+            resolve({ success: true });
             return;
           }
 
-          // // check to see if this day is already successfully saved to db
-          // else if (contributions.length < 100) {
-          //   if (await checkIfAllSaved(db, formattedDate, count, candidate)) {
-          //     resolve(true);
-          //   }
-          // }
-
           // if done fetching, save to DB
           else if (count && fetchedSoFar >= count) {
-            initSave(db, contributions, formattedDate, candidate, count);
-            resolve(true);
+            await initSave(db, contributions, candidate);
+            resolve({ success: true });
             return;
           }
 
           // save 10k if array is getting too big for its britches & continue
           if (contributions.length === 10000) {
-            initSave(db, contributions, formattedDate, candidate, count);
+            await initSave(db, contributions, candidate);
             contributions = [];
 
             // resets didPaginationFail function
@@ -154,17 +148,18 @@ function fetchContributions(db, candidate) {
             l_date = pageData.last_indexes.last_contribution_receipt_date;
           }
 
-          console.log(`-------${formattedDate}--------`);
-          console.log('count: ', count);
-          console.log('fetchedSoFar: ', fetchedSoFar);
-          console.log('l_idx: ', l_idx, '  l_date: ', l_date);
+          console.log(
+            `${formattedDate}-${letter} -- count: ${count}, fetchedSoFar: ${fetchedSoFar}`
+          );
 
           fetchNext();
         })
         .catch(err => {
           if (err.response && err.response.status == 429) {
             KEY = nextKey();
-
+            fetchNext();
+          } else if (err.response && err.response.status == 500) {
+            console.log('500 Server Error. continuing...');
             fetchNext();
           } else {
             console.log(err);
@@ -175,26 +170,33 @@ function fetchContributions(db, candidate) {
 }
 
 async function initSave() {
-  try {
-    await save(...arguments);
-    return;
-  } catch (err) {
-    console.log(err);
-  }
+  return new Promise(async res => {
+    try {
+      await save(...arguments);
+      res();
+    } catch (err) {
+      console.log(err);
+    }
+  });
 }
 
-function save(db, contributions, date, candidate, count) {
-  const letter = nextLetter();
-
+function save(db, contributions, candidate) {
   return new Promise((res, rej) => {
-    const _id = `${date + letter}`;
+    const _id = `${formattedDate}-${letter}`;
     console.log('======================');
-    console.log(`saving ${_id} contributions...`);
+    console.log(
+      `saving ${_id}, ${
+        contributions.length
+      } contributions of count ${count}...`
+    );
 
     const object = {
       _id,
       count,
-      contributions
+      l_idx,
+      l_date,
+      contributions,
+      savedSoFar: fetchedSoFar
     };
 
     const doc = db.collection(candidate.name);
@@ -203,9 +205,39 @@ function save(db, contributions, date, candidate, count) {
       .then(() => {
         console.log(`${_id} success!`);
         console.log('======================');
+
+        letter = nextLetter();
         res(true);
       })
       .catch(rej);
+  });
+}
+
+function retryLastBatch(db, candidate) {
+  return new Promise(res => {
+    const prevLetter = String.fromCharCode(letter.charCodeAt() - 1);
+    const _id = `${formattedDate}-${prevLetter}`;
+    const doc = db.collection(candidate.name);
+
+    console.log('Looking up previous saved batch: ', _id);
+
+    // get l_idx and l_date from the previously saved 10k batch
+    doc
+      .findOne({ _id: _id }, { l_idx: 1, l_date, savedSoFar: 1 })
+      .then(async result => {
+        ({ l_idx, l_date, savedSoFar } = result);
+        fetchedSoFar = savedSoFar;
+
+        // start fetching again
+        const fetchResult = await fetchContributions(db, candidate);
+
+        // if fetch failed, try, try, try again...
+        if (!fetchResult.success) {
+          await retryLastBatch(db, candidate);
+        } else {
+          res();
+        }
+      });
   });
 }
 
